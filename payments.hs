@@ -1,14 +1,10 @@
 
-import qualified Data.List.Split as S
-import qualified Data.List as L
-import qualified Data.Map as M
-import qualified Data.Ord as O
+import qualified Data.List.Split as Split
+import qualified Data.List as List
+import qualified Data.Map as Map
+import qualified Data.Ord as Ord
 
-length'' :: [a] -> Double
-length'' = fromIntegral . length
-
-from_just :: Maybe a -> a
-from_just (Just x) = x
+import Data.Maybe
 
 -- (item name, buyer name, recipients, cost)
 src_data :: String
@@ -18,53 +14,98 @@ src_data =
 	"SwedishFish       Lucas [Brett]           3\n" ++
 	"LaundryDetergent  Lucas [Lucas,Tom]       10"
 
-who_owes_whom_how_much :: [(String, [String], Double)] -> [(String, String, Double)]
-who_owes_whom_how_much =
-	filter h . map g . L.group . L.sort . concat . map f
+src2 :: String
+src2 =
+	"_ F [E] 10\n" ++
+	"_ E [D] 9\n" ++
+	"_ D [C] 8\n" ++ 
+	"_ C [B] 8\n" ++ 
+	"_ B [A] 13\n"
+
+calc_owings_to_people :: [(String, [String], Double)] -> [(String, String, Double)]
+calc_owings_to_people
+	= filter (\(a, b, _) -> a /= b)
+	. map (foldl1 g)
+	. List.group
+	. List.sort
+	. concatMap f
 	where
-		f (buyer, owers, amount) =
-			[(ower, buyer, amount / (length'' owers)) | ower <- owers]
-		g = foldl1 (\(a, b, r) (a', b', r') -> (a, b, r + r'))
-		h (a, b, _) = a /= b
+		f :: (String, [String], Double) -> [(String, String, Double)]
+		f (buyer, owers, amount)
+			= [(ower, buyer, amount') | ower <- owers]
+			where
+				amount' :: Double
+				amount' = amount / (length' owers)
 
-who_owes_how_much :: [(String, String, Double)] -> [(String, Double)]
-who_owes_how_much =
-	reverse
-		. L.sortBy (O.comparing snd)
-			. M.toList
-				. foldl update_record M.empty
-	where update_record m record@(a, b, r) = m''
-		where
-			s = M.lookup a m
-			t = M.lookup b m
+		g :: (String, String, Double) -> (String, String, Double) -> (String, String, Double)
+		g (a, b, r) (_, _, r') = (a, b, r + r')
 
-			s' = r
-			t' = r * (-1)
+		length' :: [a] -> Double
+		length' = fromIntegral . length
 
-			-- TODO: this, but more monadically somehow?
-			s'' = if s == Nothing then s' else (from_just s) + s'
-			t'' = if t == Nothing then t' else (from_just t) + t'
 
-			m'  = M.insert a s'' m
-			m'' = M.insert b t'' m'
-
-calc_optimal_payment_strategy :: [(String, [String], Double)] -> M.Map String (String, Double)
-calc_optimal_payment_strategy formatted_input = M.fromList as_list
+calc_individual_owings :: [(String, String, Double)] -> [(String, Double)]
+calc_individual_owings
+	= reverse
+	. List.sortBy (Ord.comparing snd)
+	. filter doesnt_owe_zero
+	. Map.toList
+	. foldl update_record Map.empty
 	where
-		l = who_owes_how_much $ who_owes_whom_how_much $ formatted_input
-		as_list = zipWith (\(a, e) (b, _) -> (a, (b, e))) l (tail l)
+		doesnt_owe_zero :: (String, Double) -> Bool
+		doesnt_owe_zero (_, n) = (n /= 0)
 
-read' :: String -> Double
-read' d = read d :: Double
+		update_record :: Map.Map String Double -> (String, String, Double) -> Map.Map String Double
+		update_record m record@(a, b, r) = m''
+			where
+				s = Map.lookup a m
+				t = Map.lookup b m
+
+				s' = r
+				t' = r * (-1)
+
+				-- TODO: this, but more monadically somehow?
+				s'' = if isNothing s then s' else (fromJust s) + s'
+				t'' = if isNothing t then t' else (fromJust t) + t'
+
+				m'  = Map.insert a s'' m
+				m'' = Map.insert b t'' m'
+
+calc_optimal_payment_strategy :: [(String, [String], Double)] -> Map.Map String (String, Double)
+calc_optimal_payment_strategy formatted_input
+	= Map.fromList as_list
+	where
+		individual_owings :: [(String, Double)]
+		individual_owings
+			= calc_individual_owings
+			. calc_owings_to_people
+			$ formatted_input
+
+		as_list :: [(String, (String, Double))]
+		as_list = zipWith f individual_owings (tail individual_owings)
+
+		f :: (String, Double) -> (String, Double) -> (String, (String, Double))
+		f (a, e) (b, _) = (a, (b, e))
 
 format :: String -> [(String, [String], Double)]
 format = map format_line . lines
 	where
-		format_line = f . to_tuple4 . words
-		to_tuple4 l = (l !! 0, l !! 1, l !! 2, l !! 3)
-		f (a, b, c, d) = (b, g c, read' d)
-		g = S.splitOn "," . tail . init
+		format_line :: String -> (String, [String], Double)
+		format_line
+			= (\(a, b, c, d) -> (b, g c, read' d))
+			. to_tuple4
+			. words
 
+		to_tuple4 :: [String] -> (String, String, String, String)
+		to_tuple4 l = (l !! 0, l !! 1, l !! 2, l !! 3)
+		
+		g :: String -> [String]
+		g = Split.splitOn "," . tail . init
+
+		read' :: String -> Double
+		read' d = read d :: Double
+
+main :: IO ()
 main = do
 	contents <- getContents
-	putStrLn . show $ calc_optimal_payment_strategy (format contents)
+	putStrLn . show $ calc_optimal_payment_strategy . format $ contents
